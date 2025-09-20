@@ -20,7 +20,7 @@ def get_financials(ticker):
 
 # --- Fetch sector EV/EBITDA ---
 url = "https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/vebitda.html"
-sector_table = pd.read_html(url, header=0)[0]  # use first row as header
+sector_table = pd.read_html(url, header=0)[0]
 sector_table.columns = [str(c).strip() for c in sector_table.columns]
 sector_table = sector_table.rename(columns={"Industry Name": "Sector", "EV/EBITDA": "Sector EV/EBITDA"})
 
@@ -35,7 +35,12 @@ cap_choice = st.sidebar.radio("Market Cap Filter", [
     "Large Cap ($10B–$50B)",
     "Mega Cap ($50B–$200B)",
     "Ultra Cap (>$200B)",
-])
+], index=3)  # default = Large Cap
+
+# --- Prevent loading entire dataset ---
+if sector_choice == "All" and cap_choice == "Show All Companies":
+    st.warning("⚠️ Please select a sector or market cap filter. Loading all 47k companies is too large.")
+    st.stop()
 
 # --- Apply sector filter first (reduces API calls) ---
 if sector_choice != "All":
@@ -43,59 +48,67 @@ if sector_choice != "All":
 else:
     filtered = companies.copy()
 
-# --- Fetch financials only for filtered tickers ---
-financials = pd.DataFrame([get_financials(tkr) for tkr in filtered["Ticker"]])
-filtered = pd.concat([filtered.reset_index(drop=True), financials], axis=1)
+# --- Limit to top 200 tickers ---
+if len(filtered) > 200:
+    st.warning(f"⚠️ Too many companies selected ({len(filtered)}). Showing top 200 by ticker order.")
+    filtered = filtered.head(200)
 
-# --- Filter Market Cap categories ---
-if cap_choice == "Small Cap (<$2B)":
-    filtered = filtered[filtered["Market Cap"] < 2_000_000_000]
-elif cap_choice == "Mid Cap ($2B–$10B)":
-    filtered = filtered[(filtered["Market Cap"] >= 2_000_000_000) & (filtered["Market Cap"] < 10_000_000_000)]
-elif cap_choice == "Large Cap ($10B–$50B)":
-    filtered = filtered[(filtered["Market Cap"] >= 10_000_000_000) & (filtered["Market Cap"] < 50_000_000_000)]
-elif cap_choice == "Mega Cap ($50B–$200B)":
-    filtered = filtered[(filtered["Market Cap"] >= 50_000_000_000) & (filtered["Market Cap"] < 200_000_000_000)]
-elif cap_choice == "Ultra Cap (>$200B)":
-    filtered = filtered[filtered["Market Cap"] >= 200_000_000_000]
+# --- Fetch financials only when button is pressed ---
+if st.button("Fetch Data"):
+    financials = pd.DataFrame([get_financials(tkr) for tkr in filtered["Ticker"]])
+    filtered = pd.concat([filtered.reset_index(drop=True), financials], axis=1)
 
-# --- Merge with sector EV/EBITDA ---
-filtered = filtered.merge(sector_table[["Sector", "Sector EV/EBITDA"]], on="Sector", how="left")
+    # --- Apply Market Cap filter ---
+    if cap_choice == "Small Cap (<$2B)":
+        filtered = filtered[filtered["Market Cap"] < 2_000_000_000]
+    elif cap_choice == "Mid Cap ($2B–$10B)":
+        filtered = filtered[(filtered["Market Cap"] >= 2_000_000_000) & (filtered["Market Cap"] < 10_000_000_000)]
+    elif cap_choice == "Large Cap ($10B–$50B)":
+        filtered = filtered[(filtered["Market Cap"] >= 10_000_000_000) & (filtered["Market Cap"] < 50_000_000_000)]
+    elif cap_choice == "Mega Cap ($50B–$200B)":
+        filtered = filtered[(filtered["Market Cap"] >= 50_000_000_000) & (filtered["Market Cap"] < 200_000_000_000)]
+    elif cap_choice == "Ultra Cap (>$200B)":
+        filtered = filtered[filtered["Market Cap"] >= 200_000_000_000]
 
-# --- Formatting helpers ---
-def format_mcap(mcap):
-    if pd.isna(mcap):
-        return "N/A"
-    if mcap >= 1_000_000_000_000:
-        return f"{mcap/1_000_000_000_000:.2f}T"
-    elif mcap >= 1_000_000_000:
-        return f"{mcap/1_000_000_000:.2f}B"
-    elif mcap >= 1_000_000:
-        return f"{mcap/1_000_000:.2f}M"
-    else:
-        return str(mcap)
+    # --- Merge with sector EV/EBITDA ---
+    filtered = filtered.merge(sector_table[["Sector", "Sector EV/EBITDA"]], on="Sector", how="left")
 
-def format_multiple(val):
-    if pd.isna(val):
-        return "N/A"
-    return f"{val:.1f}×"
+    # --- Formatting helpers ---
+    def format_mcap(mcap):
+        if pd.isna(mcap):
+            return "N/A"
+        if mcap >= 1_000_000_000_000:
+            return f"{mcap/1_000_000_000_000:.2f}T"
+        elif mcap >= 1_000_000_000:
+            return f"{mcap/1_000_000_000:.2f}B"
+        elif mcap >= 1_000_000:
+            return f"{mcap/1_000_000:.2f}M"
+        else:
+            return str(mcap)
 
-filtered["Market Cap"] = filtered["Market Cap"].apply(format_mcap)
-filtered["Company EV/EBITDA"] = filtered["Company EV/EBITDA"].apply(format_multiple)
-filtered["Sector EV/EBITDA"] = filtered["Sector EV/EBITDA"].apply(format_multiple)
+    def format_multiple(val):
+        if pd.isna(val):
+            return "N/A"
+        return f"{val:.1f}×"
 
-# --- Display table ---
-st.data_editor(
-    filtered[["Company Name", "Ticker", "Sector", "Market Cap", "Company EV/EBITDA", "Sector EV/EBITDA"]],
-    use_container_width=True,
-    hide_index=True,
-    disabled=True
-)
+    filtered["Market Cap"] = filtered["Market Cap"].apply(format_mcap)
+    filtered["Company EV/EBITDA"] = filtered["Company EV/EBITDA"].apply(format_multiple)
+    filtered["Sector EV/EBITDA"] = filtered["Sector EV/EBITDA"].apply(format_multiple)
 
-# --- Download button ---
-st.download_button(
-    "⬇️ Download CSV",
-    filtered.to_csv(index=False),
-    "company_multiples.csv",
-    "text/csv"
-)
+    # --- Display table ---
+    st.data_editor(
+        filtered[["Company Name", "Ticker", "Sector", "Market Cap", "Company EV/EBITDA", "Sector EV/EBITDA"]],
+        use_container_width=True,
+        hide_index=True,
+        disabled=True
+    )
+
+    # --- Download button ---
+    st.download_button(
+        "⬇️ Download CSV",
+        filtered.to_csv(index=False),
+        "company_multiples.csv",
+        "text/csv"
+    )
+else:
+    st.info("👆 Select filters and click 'Fetch Data' to load results.")
