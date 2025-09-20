@@ -20,8 +20,8 @@ def get_financials(ticker):
 
 # --- Fetch sector EV/EBITDA ---
 url = "https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/vebitda.html"
-sector_table = pd.read_html(url)[0]
-sector_table.columns = [c.strip() for c in sector_table.columns]
+sector_table = pd.read_html(url, header=0)[0]  # use first row as header
+sector_table.columns = [str(c).strip() for c in sector_table.columns]
 sector_table = sector_table.rename(columns={"Industry Name": "Sector", "EV/EBITDA": "Sector EV/EBITDA"})
 
 # --- Streamlit UI ---
