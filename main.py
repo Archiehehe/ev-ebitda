@@ -2,32 +2,44 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 
-# --- Load base company list ---
+# --- Load company list ---
 companies = pd.read_csv("companies.csv")
+companies = companies[["Company Name", "Ticker", "Sector"]]
 
-# --- Cache financial data to make app fast ---
+# --- Cache Yahoo Finance lookups ---
 @st.cache_data
 def get_financials(ticker):
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
         return {
-            "Market Cap": info.get("marketCap", None),
-            "Company EV/EBITDA": info.get("enterpriseToEbitda", None),
+            "Market Cap": info.get("marketCap"),
+            "Company EV/EBITDA": info.get("enterpriseToEbitda"),
         }
     except:
         return {"Market Cap": None, "Company EV/EBITDA": None}
 
-# --- Fetch sector EV/EBITDA ---
+# --- Fetch Damodaran sector EV/EBITDA ---
 url = "https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/vebitda.html"
 sector_table = pd.read_html(url, header=0)[0]
-sector_table.columns = [str(c).strip() for c in sector_table.columns]
-sector_table = sector_table.rename(columns={"Industry Name": "Sector", "EV/EBITDA": "Sector EV/EBITDA"})
 
-# --- Streamlit UI ---
+# Normalize column names
+sector_table.columns = [str(c).strip().replace("\xa0", " ") for c in sector_table.columns]
+
+# Detect correct columns dynamically
+sector_col = next((c for c in sector_table.columns if "Industry" in c), None)
+ev_col = next((c for c in sector_table.columns if "EBITDA" in c), None)
+
+if not sector_col or not ev_col:
+    st.error("⚠️ Could not detect Sector or EV/EBITDA columns in Damodaran data.")
+    st.stop()
+
+sector_table = sector_table.rename(columns={sector_col: "Sector", ev_col: "Sector EV/EBITDA"})
+
+# --- UI ---
 st.title("📊 Company vs Sector EV/EBITDA Explorer")
 
-sector_choice = st.sidebar.selectbox("Select Sector", ["All"] + sorted(companies["Sector"].dropna().unique().tolist()))
+sector_choice = st.sidebar.selectbox("Select Sector", ["All"] + sorted(companies["Sector"].dropna().unique()))
 cap_choice = st.sidebar.radio("Market Cap Filter", [
     "Show All Companies",
     "Small Cap (<$2B)",
@@ -35,30 +47,29 @@ cap_choice = st.sidebar.radio("Market Cap Filter", [
     "Large Cap ($10B–$50B)",
     "Mega Cap ($50B–$200B)",
     "Ultra Cap (>$200B)",
-], index=3)  # default = Large Cap
+], index=3)
 
-# --- Prevent loading entire dataset ---
+# Prevent full dataset load
 if sector_choice == "All" and cap_choice == "Show All Companies":
     st.warning("⚠️ Please select a sector or market cap filter. Loading all 47k companies is too large.")
     st.stop()
 
-# --- Apply sector filter first (reduces API calls) ---
+# Apply filters first
+filtered = companies.copy()
 if sector_choice != "All":
-    filtered = companies[companies["Sector"] == sector_choice].copy()
-else:
-    filtered = companies.copy()
+    filtered = filtered[filtered["Sector"] == sector_choice]
 
-# --- Limit to top 200 tickers ---
+# Limit to 200 for performance
 if len(filtered) > 200:
-    st.warning(f"⚠️ Too many companies selected ({len(filtered)}). Showing top 200 by ticker order.")
+    st.warning(f"⚠️ Too many companies selected ({len(filtered)}). Showing first 200.")
     filtered = filtered.head(200)
 
-# --- Fetch financials only when button is pressed ---
+# Fetch data only when button is pressed
 if st.button("Fetch Data"):
     financials = pd.DataFrame([get_financials(tkr) for tkr in filtered["Ticker"]])
     filtered = pd.concat([filtered.reset_index(drop=True), financials], axis=1)
 
-    # --- Apply Market Cap filter ---
+    # Apply Market Cap filter
     if cap_choice == "Small Cap (<$2B)":
         filtered = filtered[filtered["Market Cap"] < 2_000_000_000]
     elif cap_choice == "Mid Cap ($2B–$10B)":
@@ -70,45 +81,31 @@ if st.button("Fetch Data"):
     elif cap_choice == "Ultra Cap (>$200B)":
         filtered = filtered[filtered["Market Cap"] >= 200_000_000_000]
 
-    # --- Merge with sector EV/EBITDA ---
+    # Merge with sector multiples
     filtered = filtered.merge(sector_table[["Sector", "Sector EV/EBITDA"]], on="Sector", how="left")
 
-    # --- Formatting helpers ---
-    def format_mcap(mcap):
-        if pd.isna(mcap):
-            return "N/A"
-        if mcap >= 1_000_000_000_000:
-            return f"{mcap/1_000_000_000_000:.2f}T"
-        elif mcap >= 1_000_000_000:
-            return f"{mcap/1_000_000_000:.2f}B"
-        elif mcap >= 1_000_000:
-            return f"{mcap/1_000_000:.2f}M"
-        else:
-            return str(mcap)
+    # Formatting
+    def fmt_mcap(mcap):
+        if pd.isna(mcap): return "N/A"
+        if mcap >= 1e12: return f"{mcap/1e12:.2f}T"
+        if mcap >= 1e9: return f"{mcap/1e9:.2f}B"
+        if mcap >= 1e6: return f"{mcap/1e6:.2f}M"
+        return str(mcap)
 
-    def format_multiple(val):
-        if pd.isna(val):
-            return "N/A"
-        return f"{val:.1f}×"
+    def fmt_mult(x):
+        return "N/A" if pd.isna(x) else f"{x:.1f}×"
 
-    filtered["Market Cap"] = filtered["Market Cap"].apply(format_mcap)
-    filtered["Company EV/EBITDA"] = filtered["Company EV/EBITDA"].apply(format_multiple)
-    filtered["Sector EV/EBITDA"] = filtered["Sector EV/EBITDA"].apply(format_multiple)
+    filtered["Market Cap"] = filtered["Market Cap"].apply(fmt_mcap)
+    filtered["Company EV/EBITDA"] = filtered["Company EV/EBITDA"].apply(fmt_mult)
+    filtered["Sector EV/EBITDA"] = filtered["Sector EV/EBITDA"].apply(fmt_mult)
 
-    # --- Display table ---
+    # Show table
     st.data_editor(
         filtered[["Company Name", "Ticker", "Sector", "Market Cap", "Company EV/EBITDA", "Sector EV/EBITDA"]],
-        use_container_width=True,
-        hide_index=True,
-        disabled=True
+        use_container_width=True, hide_index=True, disabled=True
     )
 
-    # --- Download button ---
-    st.download_button(
-        "⬇️ Download CSV",
-        filtered.to_csv(index=False),
-        "company_multiples.csv",
-        "text/csv"
-    )
+    # Download option
+    st.download_button("⬇️ Download CSV", filtered.to_csv(index=False), "company_multiples.csv", "text/csv")
 else:
     st.info("👆 Select filters and click 'Fetch Data' to load results.")
