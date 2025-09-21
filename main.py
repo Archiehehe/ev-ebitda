@@ -26,12 +26,12 @@ sector_table = pd.read_html(url, header=0)[0]
 # Normalize column names
 sector_table.columns = [str(c).strip().replace("\xa0", " ") for c in sector_table.columns]
 
-# Detect correct columns dynamically
+# Dynamically detect correct columns
 sector_col = next((c for c in sector_table.columns if "Industry" in c), None)
 ev_col = next((c for c in sector_table.columns if "EBITDA" in c), None)
 
 if not sector_col or not ev_col:
-    st.error("⚠️ Could not detect Sector or EV/EBITDA columns in Damodaran data.")
+    st.error("⚠️ Could not detect Sector or EV/EBITDA columns in Damodaran data. Found: " + ", ".join(sector_table.columns))
     st.stop()
 
 sector_table = sector_table.rename(columns={sector_col: "Sector", ev_col: "Sector EV/EBITDA"})
@@ -64,7 +64,7 @@ if len(filtered) > 200:
     st.warning(f"⚠️ Too many companies selected ({len(filtered)}). Showing first 200.")
     filtered = filtered.head(200)
 
-# Fetch data only when button is pressed
+# --- Fetch data only when button is pressed ---
 if st.button("Fetch Data"):
     financials = pd.DataFrame([get_financials(tkr) for tkr in filtered["Ticker"]])
     filtered = pd.concat([filtered.reset_index(drop=True), financials], axis=1)
@@ -84,7 +84,7 @@ if st.button("Fetch Data"):
     # Merge with sector multiples
     filtered = filtered.merge(sector_table[["Sector", "Sector EV/EBITDA"]], on="Sector", how="left")
 
-    # Formatting
+    # --- Formatting helpers ---
     def fmt_mcap(mcap):
         if pd.isna(mcap): return "N/A"
         if mcap >= 1e12: return f"{mcap/1e12:.2f}T"
