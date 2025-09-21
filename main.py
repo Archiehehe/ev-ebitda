@@ -24,17 +24,12 @@ url = "https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/vebitda.html
 sector_table = pd.read_html(url, header=0)[0]
 
 # Normalize column names
-sector_table.columns = [str(c).strip().replace("\xa0", " ") for c in sector_table.columns]
+sector_table.columns = [str(c).strip() for c in sector_table.columns]
 
-# Dynamically detect correct columns
-sector_col = next((c for c in sector_table.columns if "Industry" in c), None)
-ev_col = next((c for c in sector_table.columns if "EBITDA" in c), None)
-
-if not sector_col or not ev_col:
-    st.error("⚠️ Could not detect Sector or EV/EBITDA columns in Damodaran data. Found: " + ", ".join(sector_table.columns))
-    st.stop()
-
-sector_table = sector_table.rename(columns={sector_col: "Sector", ev_col: "Sector EV/EBITDA"})
+# Pick first column as Sector, last "All firms" column as EV/EBITDA
+sector_table = sector_table.iloc[:, [0, -1]].rename(
+    columns={sector_table.columns[0]: "Sector", sector_table.columns[-1]: "Sector EV/EBITDA"}
+)
 
 # --- UI ---
 st.title("📊 Company vs Sector EV/EBITDA Explorer")
@@ -82,7 +77,7 @@ if st.button("Fetch Data"):
         filtered = filtered[filtered["Market Cap"] >= 200_000_000_000]
 
     # Merge with sector multiples
-    filtered = filtered.merge(sector_table[["Sector", "Sector EV/EBITDA"]], on="Sector", how="left")
+    filtered = filtered.merge(sector_table, on="Sector", how="left")
 
     # --- Formatting helpers ---
     def fmt_mcap(mcap):
