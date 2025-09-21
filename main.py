@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+from companies_data import companies_list   # <-- import the embedded dataset
 
-# --- Load company list ---
-companies = pd.read_csv("companies.csv")
-companies = companies[["Company Name", "Ticker", "Sector"]]
+# --- Load company list from embedded Python file ---
+companies = pd.DataFrame(companies_list)
 
 # --- Cache Yahoo Finance lookups ---
 @st.cache_data
@@ -23,15 +23,15 @@ def get_financials(ticker):
 url = "https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/vebitda.html"
 sector_table = pd.read_html(url, header=0)[0]
 
-# Normalize column names
+# Normalize columns
 sector_table.columns = [str(c).strip() for c in sector_table.columns]
 
-# Pick first column as Sector, last "All firms" column as EV/EBITDA
+# Take first column = Sector, last column = EV/EBITDA (All Firms)
 sector_table = sector_table.iloc[:, [0, -1]].rename(
     columns={sector_table.columns[0]: "Sector", sector_table.columns[-1]: "Sector EV/EBITDA"}
 )
 
-# --- UI ---
+# --- Streamlit UI ---
 st.title("📊 Company vs Sector EV/EBITDA Explorer")
 
 sector_choice = st.sidebar.selectbox("Select Sector", ["All"] + sorted(companies["Sector"].dropna().unique()))
@@ -44,17 +44,17 @@ cap_choice = st.sidebar.radio("Market Cap Filter", [
     "Ultra Cap (>$200B)",
 ], index=3)
 
-# Prevent full dataset load
+# Prevent loading full dataset
 if sector_choice == "All" and cap_choice == "Show All Companies":
-    st.warning("⚠️ Please select a sector or market cap filter. Loading all 47k companies is too large.")
+    st.warning("⚠️ Please select a sector or market cap filter. Loading all 7,000+ companies is too large.")
     st.stop()
 
-# Apply filters first
+# Apply filters
 filtered = companies.copy()
 if sector_choice != "All":
     filtered = filtered[filtered["Sector"] == sector_choice]
 
-# Limit to 200 for performance
+# Limit for performance
 if len(filtered) > 200:
     st.warning(f"⚠️ Too many companies selected ({len(filtered)}). Showing first 200.")
     filtered = filtered.head(200)
@@ -79,7 +79,7 @@ if st.button("Fetch Data"):
     # Merge with sector multiples
     filtered = filtered.merge(sector_table, on="Sector", how="left")
 
-    # --- Formatting helpers ---
+    # Formatting helpers
     def fmt_mcap(mcap):
         if pd.isna(mcap): return "N/A"
         if mcap >= 1e12: return f"{mcap/1e12:.2f}T"
@@ -94,7 +94,7 @@ if st.button("Fetch Data"):
     filtered["Company EV/EBITDA"] = filtered["Company EV/EBITDA"].apply(fmt_mult)
     filtered["Sector EV/EBITDA"] = filtered["Sector EV/EBITDA"].apply(fmt_mult)
 
-    # Show table
+    # Display table
     st.data_editor(
         filtered[["Company Name", "Ticker", "Sector", "Market Cap", "Company EV/EBITDA", "Sector EV/EBITDA"]],
         use_container_width=True, hide_index=True, disabled=True
